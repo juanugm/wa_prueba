@@ -118,8 +118,8 @@ async function initializeClient(agentId) {
       puppeteer: {
         headless: true,
         executablePath: execPath,
-        timeout: 60000,
-        protocolTimeout: 120000,
+        timeout: 90000,
+        protocolTimeout: 180000,
         handleSIGINT: false,
         handleSIGTERM: false,
         handleSIGHUP: false,
@@ -130,7 +130,6 @@ async function initializeClient(agentId) {
           '--disable-accelerated-2d-canvas',
           '--no-first-run',
           '--no-zygote',
-          '--single-process', // 🔧 Force single process to avoid lock conflicts
           '--disable-gpu',
           '--disable-software-rasterizer',
           '--disable-extensions',
@@ -144,8 +143,18 @@ async function initializeClient(agentId) {
           '--hide-scrollbars',
           '--disable-blink-features=AutomationControlled',
           `--user-data-dir=/tmp/chrome-user-data-${agentId}`,
-          '--js-flags=--max-old-space-size=512',
-          '--disable-features=TranslateUI,BlinkGenPropertyTrees,IsolateOrigins,site-per-process'
+          '--disable-features=VizDisplayCompositor',
+          '--disable-breakpad',
+          '--disable-component-update',
+          '--disable-domain-reliability',
+          '--disable-features=AudioServiceOutOfProcess',
+          '--disable-features=IsolateOrigins,site-per-process',
+          '--disable-features=TranslateUI',
+          '--disable-ipc-flooding-protection',
+          '--disable-renderer-backgrounding',
+          '--enable-features=NetworkService,NetworkServiceInProcess',
+          '--force-color-profile=srgb',
+          '--js-flags=--max-old-space-size=460'
         ]
       }
     });
