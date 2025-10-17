@@ -3,6 +3,7 @@ const { Client, LocalAuth } = require('whatsapp-web.js');
 const QRCode = require('qrcode');
 const cors = require('cors');
 const fs = require('fs').promises;
+const fsSync = require('fs');
 const path = require('path');
 
 const app = express();
@@ -21,6 +22,45 @@ app.use(express.json());
 // Storage for clients and QR codes
 const clients = new Map();
 const qrCodes = new Map();
+
+// Cleanup all Chrome temp directories on startup
+const cleanupAllTempDirs = () => {
+  const tmpDir = '/tmp';
+  
+  try {
+    const files = fsSync.readdirSync(tmpDir);
+    const chromeDirs = files.filter(f => f.startsWith('chrome-user-data-'));
+    
+    chromeDirs.forEach(dir => {
+      const fullPath = path.join(tmpDir, dir);
+      console.log(`🗑️ Cleaning up old Chrome directory: ${fullPath}`);
+      try {
+        fsSync.rmSync(fullPath, { recursive: true, force: true });
+      } catch (error) {
+        console.error(`⚠️ Error cleaning ${fullPath}:`, error.message);
+      }
+    });
+    
+    console.log(`✅ Cleaned up ${chromeDirs.length} old Chrome directories`);
+  } catch (error) {
+    console.error('❌ Error during startup cleanup:', error);
+  }
+};
+
+// Cleanup Chrome temp directory for specific agent
+const cleanupTempDirs = async (agentId) => {
+  const chromeTempDir = `/tmp/chrome-user-data-${agentId}`;
+  
+  try {
+    if (fsSync.existsSync(chromeTempDir)) {
+      console.log(`🗑️ Deleting Chrome temp dir at: ${chromeTempDir}`);
+      fsSync.rmSync(chromeTempDir, { recursive: true, force: true });
+      console.log('✅ Chrome temp dir deleted');
+    }
+  } catch (error) {
+    console.error('❌ Error cleaning Chrome temp dir:', error);
+  }
+};
 
 // Helper function to destroy a client completely
 async function destroyClient(agentId) {
@@ -65,6 +105,9 @@ const authMiddleware = (req, res, next) => {
 
 // Helper function to initialize WhatsApp client
 async function initializeClient(agentId) {
+  // 🔧 Clean Chrome temp directories BEFORE initializing
+  await cleanupTempDirs(agentId);
+  
   const execPath = process.env.PUPPETEER_EXECUTABLE_PATH || '/usr/bin/google-chrome-stable';
   console.log(`📱 Initializing WhatsApp client for agent: ${agentId}`);
   console.log(`🌐 Using Chrome at: ${execPath}`);
@@ -87,6 +130,7 @@ async function initializeClient(agentId) {
           '--disable-accelerated-2d-canvas',
           '--no-first-run',
           '--no-zygote',
+          '--single-process', // 🔧 Force single process to avoid lock conflicts
           '--disable-gpu',
           '--disable-software-rasterizer',
           '--disable-extensions',
@@ -212,17 +256,18 @@ async function initializeClient(agentId) {
             'Content-Type': 'application/json',
             'Authorization': `Bearer ${WEBHOOK_SECRET}`
           },
-          body: JSON.stringify({
-            agent_id: agentId,
-            from: msg.from,
-            participant: participant,
-            body: msg.body,
-            timestamp: msg.timestamp,
-            has_media: msg.hasMedia,
-            contact_name: contactName,
-            is_group: isGroup,
-            sender_name: senderName
-          })
+            body: JSON.stringify({
+              agent_id: agentId,
+              from: msg.from,
+              participant: participant,
+              body: msg.body,
+              timestamp: msg.timestamp,
+              has_media: msg.hasMedia,
+              contact_name: contactName,
+              is_group: isGroup,
+              sender_name: senderName,
+              from_me: msg.fromMe
+            })
         });
 
         if (!webhookResponse.ok) {
@@ -477,28 +522,48 @@ app.get('/messages/:agent_id/:chat_id', authMiddleware, async (req, res) => {
 app.post('/disconnect/:agent_id', authMiddleware, async (req, res) => {
   try {
     const { agent_id } = req.params;
+    console.log(`🔌 Disconnect request for agent: ${agent_id}`);
+    
     const client = clients.get(agent_id);
     
-    if (!client) {
-      return res.json({ success: true, message: 'Client not found' });
+    if (client) {
+      console.log(`🗑️ Destroying client for ${agent_id}`);
+      await client.destroy();
+      clients.delete(agent_id);
+      qrCodes.delete(agent_id);
     }
     
-    console.log(`🔌 Disconnecting client for ${agent_id}`);
+    // 🔧 Clean LocalAuth data
+    const authPath = path.join(__dirname, '.wwebjs_auth', agent_id);
+    try {
+      if (fsSync.existsSync(authPath)) {
+        console.log(`🗑️ Deleting LocalAuth data at: ${authPath}`);
+        fsSync.rmSync(authPath, { recursive: true, force: true });
+        console.log('✅ LocalAuth data deleted');
+      }
+    } catch (error) {
+      console.error('⚠️ Error cleaning LocalAuth:', error.message);
+    }
     
-    await client.destroy();
-    clients.delete(agent_id);
-    qrCodes.delete(agent_id);
+    // 🔧 Clean Chrome temp directory
+    await cleanupTempDirs(agent_id);
     
-    res.json({ success: true });
+    res.json({ success: true, message: 'Client disconnected and cleaned up' });
   } catch (error) {
-    console.error('Error disconnecting:', error);
+    console.error(`❌ Error disconnecting client for ${agent_id}:`, error);
     res.status(500).json({ error: error.message });
   }
 });
 
+// Cleanup on startup
+cleanupAllTempDirs();
+
 // Start server
 app.listen(PORT, () => {
   console.log(`🚀 WhatsApp Microservice running on port ${PORT}`);
+  console.log(`📍 Webhook URL: ${WEBHOOK_URL}`);
+  console.log(`🔐 Auth configured: ${MICROSERVICE_SECRET !== 'your-secret-key-here'}`);
+});
   console.log(`📍 Webhook URL: ${WEBHOOK_URL}`);
   console.log(`🔐 Auth configured: ${MICROSERVICE_SECRET !== 'your-secret-key-here'}`);
 });
