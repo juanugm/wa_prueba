@@ -256,18 +256,18 @@ async function initializeClient(agentId) {
             'Content-Type': 'application/json',
             'Authorization': `Bearer ${WEBHOOK_SECRET}`
           },
-            body: JSON.stringify({
-              agent_id: agentId,
-              from: msg.from,
-              participant: participant,
-              body: msg.body,
-              timestamp: msg.timestamp,
-              has_media: msg.hasMedia,
-              contact_name: contactName,
-              is_group: isGroup,
-              sender_name: senderName,
-              from_me: msg.fromMe
-            })
+          body: JSON.stringify({
+            agent_id: agentId,
+            from: msg.from,
+            participant: participant,
+            body: msg.body,
+            timestamp: msg.timestamp,
+            has_media: msg.hasMedia,
+            contact_name: contactName,
+            is_group: isGroup,
+            sender_name: senderName,
+            from_me: msg.fromMe
+          })
         });
 
         if (!webhookResponse.ok) {
@@ -561,9 +561,6 @@ cleanupAllTempDirs();
 // Start server
 app.listen(PORT, () => {
   console.log(`🚀 WhatsApp Microservice running on port ${PORT}`);
-  console.log(`📍 Webhook URL: ${WEBHOOK_URL}`);
-  console.log(`🔐 Auth configured: ${MICROSERVICE_SECRET !== 'your-secret-key-here'}`);
-});
   console.log(`📍 Webhook URL: ${WEBHOOK_URL}`);
   console.log(`🔐 Auth configured: ${MICROSERVICE_SECRET !== 'your-secret-key-here'}`);
 });
