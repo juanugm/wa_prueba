@@ -210,9 +210,9 @@ async function initializeClient(agentId) {
       qrCodes.delete(agentId);
     });
 
-    // Incoming message handler
-    client.on('message', async (msg) => {
-      console.log(`📨 Message received from ${msg.from}:`, msg.body);
+    // Message handler (incoming and outgoing)
+    client.on('message_create', async (msg) => {
+      console.log(`📨 Message ${msg.fromMe ? 'SENT' : 'RECEIVED'} ${msg.fromMe ? 'to' : 'from'} ${msg.from}:`, msg.body?.substring(0, 50));
       
       try {
         const contact = await msg.getContact();
@@ -255,7 +255,7 @@ async function initializeClient(agentId) {
             console.error('Error getting chat info:', error.message);
           }
         } else {
-          console.log(`📍 Individual message from: ${contactName}`);
+          console.log(`📍 ${msg.fromMe ? 'Sent to' : 'Message from'}: ${contactName}`);
         }
         
         // Send webhook to Supabase
@@ -282,7 +282,7 @@ async function initializeClient(agentId) {
         if (!webhookResponse.ok) {
           console.error('Webhook error:', await webhookResponse.text());
         } else {
-          console.log('✅ Message forwarded to webhook');
+          console.log(`✅ Webhook sent successfully (${msg.fromMe ? 'outgoing' : 'incoming'})`);
         }
       } catch (error) {
         console.error('Error processing message:', error);
