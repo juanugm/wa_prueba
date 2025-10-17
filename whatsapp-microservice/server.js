@@ -65,14 +65,17 @@ const authMiddleware = (req, res, next) => {
 
 // Helper function to initialize WhatsApp client
 async function initializeClient(agentId) {
+  const execPath = process.env.PUPPETEER_EXECUTABLE_PATH || '/usr/bin/google-chrome-stable';
   console.log(`📱 Initializing WhatsApp client for agent: ${agentId}`);
+  console.log(`🌐 Using Chrome at: ${execPath}`);
   
   return new Promise((resolve, reject) => {
     const client = new Client({
       authStrategy: new LocalAuth({ clientId: agentId }),
       puppeteer: {
         headless: true,
-        executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || '/usr/bin/chromium',
+        executablePath: execPath,
+        timeout: 60000,
         args: [
           '--no-sandbox',
           '--disable-setuid-sandbox',
@@ -81,7 +84,20 @@ async function initializeClient(agentId) {
           '--no-first-run',
           '--no-zygote',
           '--single-process',
-          '--disable-gpu'
+          '--disable-gpu',
+          '--disable-software-rasterizer',
+          '--disable-extensions',
+          '--disable-background-networking',
+          '--disable-default-apps',
+          '--disable-sync',
+          '--metrics-recording-only',
+          '--mute-audio',
+          '--no-crash-upload',
+          '--headless=new',
+          '--hide-scrollbars',
+          '--disable-blink-features=AutomationControlled',
+          '--user-data-dir=/tmp/chrome-user-data',
+          '--disable-features=TranslateUI,BlinkGenPropertyTrees'
         ]
       }
     });
