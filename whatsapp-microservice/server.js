@@ -28,6 +28,9 @@ async function destroyClient(agentId) {
   if (client) {
     try {
       await client.destroy();
+      // Wait 2 seconds for Puppeteer to fully cleanup
+      await new Promise(resolve => setTimeout(resolve, 2000));
+      console.log(`⏱️ Waited for Puppeteer cleanup`);
     } catch (error) {
       console.error(`⚠️ Error destroying client for ${agentId}:`, error.message);
     }
@@ -218,7 +221,7 @@ app.post('/init', authMiddleware, async (req, res) => {
     }
     
     // Always create a fresh client
-    console.log(`📱 Creating fresh client for ${agent_id}`);
+    console.log(`📱 Creating fresh client for ${agent_id} (after cleanup delay)`);
     
     try {
       client = await initializeClient(agent_id);
