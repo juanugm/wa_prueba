@@ -99,7 +99,7 @@ async function initializeClient(agentId) {
           '--headless=new',
           '--hide-scrollbars',
           '--disable-blink-features=AutomationControlled',
-          '--user-data-dir=/tmp/chrome-user-data',
+          `--user-data-dir=/tmp/chrome-user-data-${agentId}`,
           '--js-flags=--max-old-space-size=512',
           '--disable-features=TranslateUI,BlinkGenPropertyTrees,IsolateOrigins,site-per-process'
         ]
