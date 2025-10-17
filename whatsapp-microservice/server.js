@@ -20,6 +20,24 @@ app.use(express.json());
 const clients = new Map();
 const qrCodes = new Map();
 
+// Helper function to destroy a client completely
+async function destroyClient(agentId) {
+  console.log(`🗑️ Destroying client for ${agentId}`);
+  const client = clients.get(agentId);
+  
+  if (client) {
+    try {
+      await client.destroy();
+    } catch (error) {
+      console.error(`⚠️ Error destroying client for ${agentId}:`, error.message);
+    }
+  }
+  
+  clients.delete(agentId);
+  qrCodes.delete(agentId);
+  console.log(`✅ Client destroyed for ${agentId}`);
+}
+
 // Auth middleware
 const authMiddleware = (req, res, next) => {
   const authHeader = req.headers.authorization;
@@ -37,40 +55,19 @@ async function initializeClient(agentId) {
     const client = new Client({
       authStrategy: new LocalAuth({ clientId: agentId }),
       puppeteer: {
-  headless: true,
-  executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || '/usr/bin/google-chrome-stable',
-  args: [
-    '--no-sandbox',
-    '--disable-setuid-sandbox',
-    '--disable-dev-shm-usage',
-    '--disable-accelerated-2d-canvas',
-    '--no-first-run',
-    '--no-zygote',
-    '--disable-gpu',
-    '--disable-software-rasterizer',
-    '--disable-extensions',
-    '--disable-background-networking',
-    '--disable-default-apps',
-    '--disable-sync',
-    '--metrics-recording-only',
-    '--mute-audio',
-    '--no-default-browser-check',
-    '--disable-crash-reporter',
-    '--disable-in-process-stack-traces',
-    '--disable-logging',
-    '--disable-permissions-api',
-    '--disable-speech-api',
-    '--disable-web-security',
-    '--hide-scrollbars',
-    '--ignore-certificate-errors',
-    '--ignore-ssl-errors',
-    '--enable-features=NetworkService',
-    '--force-color-profile=srgb',
-    '--disable-blink-features=AutomationControlled',
-    '--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
-  ]
-}
-
+        headless: true,
+        executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || '/usr/bin/chromium',
+        args: [
+          '--no-sandbox',
+          '--disable-setuid-sandbox',
+          '--disable-dev-shm-usage',
+          '--disable-accelerated-2d-canvas',
+          '--no-first-run',
+          '--no-zygote',
+          '--single-process',
+          '--disable-gpu'
+        ]
+      }
     });
 
     // QR Code generation
@@ -213,105 +210,52 @@ app.post('/init', authMiddleware, async (req, res) => {
 
     console.log(`🔄 Init request for agent: ${agent_id}`);
 
-    // Check if client already exists
+    // If client already exists, destroy it first to ensure clean state
     let client = clients.get(agent_id);
+    if (client) {
+      console.log(`🔄 Destroying existing client for ${agent_id} before creating new one`);
+      await destroyClient(agent_id);
+    }
     
-    if (!client) {
-      console.log(`📱 Creating new client for ${agent_id}`);
+    // Always create a fresh client
+    console.log(`📱 Creating fresh client for ${agent_id}`);
+    
+    try {
+      client = await initializeClient(agent_id);
+      clients.set(agent_id, client);
       
-      // Create and initialize new client (this will wait for QR or ready event)
-      try {
-        client = await initializeClient(agent_id);
-        clients.set(agent_id, client);
-        
-        // At this point, QR should be ready
-        const qrCode = qrCodes.get(agent_id);
-        
-        if (!qrCode) {
-          throw new Error('QR code not generated after initialization');
-        }
-        
-        return res.json({
-          success: true,
-          qr_code: qrCode,
-          session_id: agent_id
-        });
-      } catch (initError) {
-        console.error(`❌ Error during client initialization for ${agent_id}:`, initError);
-        clients.delete(agent_id);
-        qrCodes.delete(agent_id);
-        throw initError;
-      }
-    } else {
-      console.log(`♻️ Client already exists for ${agent_id}, checking state...`);
+      // At this point, QR should be ready
+      const qrCode = qrCodes.get(agent_id);
       
-      // Client exists, try to check if it's ready
-      try {
-        const state = await client.getState();
-        
-        if (state === 'CONNECTED') {
-          return res.json({
-            success: true,
-            already_connected: true,
-            session_id: agent_id
-          });
-        } else {
-          console.log(`🔄 Client exists but not connected (state: ${state}), checking for QR...`);
-          const qrCode = qrCodes.get(agent_id);
-          if (qrCode) {
-            return res.json({
-              success: true,
-              qr_code: qrCode,
-              session_id: agent_id
-            });
-          } else {
-            // Client exists but no QR and not connected - reinitialize
-            console.log(`🔄 Reinitializing client for ${agent_id}`);
-            clients.delete(agent_id);
-            qrCodes.delete(agent_id);
-            
-            client = await initializeClient(agent_id);
-            clients.set(agent_id, client);
-            
-            const newQrCode = qrCodes.get(agent_id);
-            if (!newQrCode) {
-              throw new Error('Failed to generate QR code after reinitialization');
-            }
-            
-            return res.json({
-              success: true,
-              qr_code: newQrCode,
-              session_id: agent_id
-            });
-          }
-        }
-      } catch (stateError) {
-        console.error(`⚠️ Error checking client state for ${agent_id}:`, stateError);
-        // If we can't get state, assume client is broken and reinitialize
-        console.log(`🔄 Reinitializing client after state error for ${agent_id}`);
-        clients.delete(agent_id);
-        qrCodes.delete(agent_id);
-        
-        client = await initializeClient(agent_id);
-        clients.set(agent_id, client);
-        
-        const newQrCode = qrCodes.get(agent_id);
-        if (!newQrCode) {
-          throw new Error('Failed to generate QR code after error recovery');
-        }
-        
-        return res.json({
-          success: true,
-          qr_code: newQrCode,
-          session_id: agent_id
-        });
+      if (!qrCode) {
+        throw new Error('QR code not generated after initialization');
       }
+      
+      return res.json({
+        success: true,
+        qr_code: qrCode,
+        session_id: agent_id
+      });
+    } catch (initError) {
+      console.error(`❌ Error during client initialization for ${agent_id}:`, initError);
+      await destroyClient(agent_id);
+      throw initError;
     }
   } catch (error) {
     console.error('❌ Error in /init endpoint:', error);
     res.status(500).json({ error: error.message });
   }
 });
+
+// Legacy code path - now simplified since we always reinitialize
+/* Old logic removed - we now always destroy and recreate
+    } else {
+      console.log(`♻️ Client already exists for ${agent_id}, checking state...`);
+      
+      // Client exists, try to check if it's ready
+      try {
+        const state = await client.getState();
+*/
 
 // Check status
 app.get('/status/:agent_id', authMiddleware, async (req, res) => {
@@ -382,6 +326,67 @@ app.post('/send', authMiddleware, async (req, res) => {
     });
   } catch (error) {
     console.error('Error sending message:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Get all chats for an agent
+app.get('/chats/:agent_id', authMiddleware, async (req, res) => {
+  try {
+    const { agent_id } = req.params;
+    const client = clients.get(agent_id);
+    
+    if (!client || !client.info) {
+      return res.status(404).json({ error: 'Client not connected' });
+    }
+    
+    console.log(`📋 Fetching chats for agent: ${agent_id}`);
+    const chats = await client.getChats();
+    
+    const chatList = chats.map(chat => ({
+      id: chat.id._serialized,
+      name: chat.name,
+      isGroup: chat.isGroup,
+      lastMessageTime: chat.timestamp,
+      unreadCount: chat.unreadCount
+    }));
+    
+    res.json({ chats: chatList });
+  } catch (error) {
+    console.error('Error getting chats:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Get messages for a specific chat
+app.get('/messages/:agent_id/:chat_id', authMiddleware, async (req, res) => {
+  try {
+    const { agent_id, chat_id } = req.params;
+    const { limit = 100 } = req.query;
+    
+    const client = clients.get(agent_id);
+    
+    if (!client || !client.info) {
+      return res.status(404).json({ error: 'Client not connected' });
+    }
+    
+    console.log(`💬 Fetching messages for ${agent_id} / ${chat_id}`);
+    const chat = await client.getChatById(chat_id);
+    const messages = await chat.fetchMessages({ limit: parseInt(limit) });
+    
+    const messageList = messages.map(msg => ({
+      id: msg.id.id,
+      body: msg.body,
+      timestamp: msg.timestamp,
+      fromMe: msg.fromMe,
+      hasMedia: msg.hasMedia,
+      from: msg.from,
+      to: msg.to
+    }));
+    
+    res.json({ messages: messageList });
+  } catch (error) {
+    console.error('Error getting messages:', error);
     res.status(500).json({ error: error.message });
   }
 });
