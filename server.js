@@ -30,121 +30,135 @@ const authMiddleware = (req, res, next) => {
 };
 
 // Helper function to initialize WhatsApp client
-function initializeClient(agentId) {
+async function initializeClient(agentId) {
   console.log(`📱 Initializing WhatsApp client for agent: ${agentId}`);
   
-  const client = new Client({
-    authStrategy: new LocalAuth({ clientId: agentId }),
-    puppeteer: {
-      headless: true,
-      executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || '/usr/bin/chromium',
-      args: [
-        '--no-sandbox',
-        '--disable-setuid-sandbox',
-        '--disable-dev-shm-usage',
-        '--disable-accelerated-2d-canvas',
-        '--no-first-run',
-        '--no-zygote',
-        '--single-process',
-        '--disable-gpu'
-      ]
-    }
-  });
-
-  // QR Code generation
-  client.on('qr', async (qr) => {
-    console.log(`📲 QR Code generated for ${agentId}`);
-    try {
-      const qrImage = await QRCode.toDataURL(qr);
-      qrCodes.set(agentId, qrImage);
-    } catch (error) {
-      console.error('Error generating QR:', error);
-    }
-  });
-
-  // Ready event
-  client.on('ready', async () => {
-    console.log(`✅ WhatsApp client ready for ${agentId}`);
-    
-    const info = client.info;
-    const phoneNumber = info.wid.user;
-    
-    console.log(`📞 Phone number: ${phoneNumber}`);
-    
-    // Notify edge function about successful connection
-    try {
-      const response = await fetch('https://wmzbqsegsyagcjgxefqs.supabase.co/functions/v1/whatsapp-personal-connect', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          action: 'connected',
-          agent_id: agentId,
-          phone_number: phoneNumber,
-          session_id: agentId
-        })
-      });
-
-      if (!response.ok) {
-        console.error('Failed to notify edge function:', await response.text());
-      } else {
-        console.log('✅ Edge function notified of connection');
+  return new Promise((resolve, reject) => {
+    const client = new Client({
+      authStrategy: new LocalAuth({ clientId: agentId }),
+      puppeteer: {
+        headless: true,
+        executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || '/usr/bin/chromium',
+        args: [
+          '--no-sandbox',
+          '--disable-setuid-sandbox',
+          '--disable-dev-shm-usage',
+          '--disable-accelerated-2d-canvas',
+          '--no-first-run',
+          '--no-zygote',
+          '--single-process',
+          '--disable-gpu'
+        ]
       }
-    } catch (error) {
-      console.error('Error notifying edge function:', error);
-    }
+    });
 
-    // Clear QR code after successful connection
-    qrCodes.delete(agentId);
-  });
+    // QR Code generation
+    client.on('qr', async (qr) => {
+      console.log(`📲 QR Code generated for ${agentId}`);
+      try {
+        const qrImage = await QRCode.toDataURL(qr);
+        qrCodes.set(agentId, qrImage);
+        // Resolve the promise when QR is ready
+        resolve(client);
+      } catch (error) {
+        console.error('Error generating QR:', error);
+        reject(error);
+      }
+    });
 
-  // Incoming message handler
-  client.on('message', async (msg) => {
-    console.log(`📨 Message received from ${msg.from}:`, msg.body);
-    
-    try {
-      const contact = await msg.getContact();
+    // Ready event
+    client.on('ready', async () => {
+      console.log(`✅ WhatsApp client ready for ${agentId}`);
       
-      // Send webhook to Supabase
-      const webhookResponse = await fetch(WEBHOOK_URL, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${WEBHOOK_SECRET}`
-        },
-        body: JSON.stringify({
-          agent_id: agentId,
-          from: msg.from,
-          body: msg.body,
-          timestamp: msg.timestamp,
-          has_media: msg.hasMedia,
-          contact_name: contact.pushname || contact.name
-        })
-      });
+      const info = client.info;
+      const phoneNumber = info.wid.user;
+      
+      console.log(`📞 Phone number: ${phoneNumber}`);
+      
+      // Notify edge function about successful connection
+      try {
+        const response = await fetch('https://wmzbqsegsyagcjgxefqs.supabase.co/functions/v1/whatsapp-personal-connect', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            action: 'connected',
+            agent_id: agentId,
+            phone_number: phoneNumber,
+            session_id: agentId
+          })
+        });
 
-      if (!webhookResponse.ok) {
-        console.error('Webhook error:', await webhookResponse.text());
-      } else {
-        console.log('✅ Message forwarded to webhook');
+        if (!response.ok) {
+          console.error('Failed to notify edge function:', await response.text());
+        } else {
+          console.log('✅ Edge function notified of connection');
+        }
+      } catch (error) {
+        console.error('Error notifying edge function:', error);
       }
-    } catch (error) {
-      console.error('Error processing message:', error);
-    }
-  });
 
-  // Error handling
-  client.on('auth_failure', (msg) => {
-    console.error(`❌ Auth failure for ${agentId}:`, msg);
-    clients.delete(agentId);
-  });
+      // Clear QR code after successful connection
+      qrCodes.delete(agentId);
+    });
 
-  client.on('disconnected', (reason) => {
-    console.log(`🔌 Client disconnected for ${agentId}:`, reason);
-    clients.delete(agentId);
-  });
+    // Incoming message handler
+    client.on('message', async (msg) => {
+      console.log(`📨 Message received from ${msg.from}:`, msg.body);
+      
+      try {
+        const contact = await msg.getContact();
+        
+        // Send webhook to Supabase
+        const webhookResponse = await fetch(WEBHOOK_URL, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${WEBHOOK_SECRET}`
+          },
+          body: JSON.stringify({
+            agent_id: agentId,
+            from: msg.from,
+            body: msg.body,
+            timestamp: msg.timestamp,
+            has_media: msg.hasMedia,
+            contact_name: contact.pushname || contact.name
+          })
+        });
 
-  return client;
+        if (!webhookResponse.ok) {
+          console.error('Webhook error:', await webhookResponse.text());
+        } else {
+          console.log('✅ Message forwarded to webhook');
+        }
+      } catch (error) {
+        console.error('Error processing message:', error);
+      }
+    });
+
+    // Error handling
+    client.on('auth_failure', (msg) => {
+      console.error(`❌ Auth failure for ${agentId}:`, msg);
+      clients.delete(agentId);
+      qrCodes.delete(agentId);
+      reject(new Error(`Authentication failed: ${msg}`));
+    });
+
+    client.on('disconnected', (reason) => {
+      console.log(`🔌 Client disconnected for ${agentId}:`, reason);
+      clients.delete(agentId);
+      qrCodes.delete(agentId);
+    });
+
+    // Initialize the client
+    client.initialize().catch((error) => {
+      console.error(`❌ Failed to initialize client for ${agentId}:`, error);
+      clients.delete(agentId);
+      qrCodes.delete(agentId);
+      reject(error);
+    });
+  });
 }
 
 // Routes
@@ -182,58 +196,98 @@ app.post('/init', authMiddleware, async (req, res) => {
     let client = clients.get(agent_id);
     
     if (!client) {
-      // Create new client
-      client = initializeClient(agent_id);
-      clients.set(agent_id, client);
+      console.log(`📱 Creating new client for ${agent_id}`);
       
-      // Initialize the client
-      await client.initialize();
-      
-      // Wait for QR code (max 30 seconds)
-      let attempts = 0;
-      const maxAttempts = 60;
-      
-      while (!qrCodes.has(agent_id) && attempts < maxAttempts) {
-        await new Promise(resolve => setTimeout(resolve, 500));
-        attempts++;
-      }
-      
-      const qrCode = qrCodes.get(agent_id);
-      
-      if (!qrCode) {
-        throw new Error('QR code generation timeout');
-      }
-      
-      res.json({
-        success: true,
-        qr_code: qrCode,
-        session_id: agent_id
-      });
-    } else {
-      // Client exists, check if it's ready
-      const state = await client.getState();
-      
-      if (state === 'CONNECTED') {
-        res.json({
+      // Create and initialize new client (this will wait for QR or ready event)
+      try {
+        client = await initializeClient(agent_id);
+        clients.set(agent_id, client);
+        
+        // At this point, QR should be ready
+        const qrCode = qrCodes.get(agent_id);
+        
+        if (!qrCode) {
+          throw new Error('QR code not generated after initialization');
+        }
+        
+        return res.json({
           success: true,
-          already_connected: true,
+          qr_code: qrCode,
           session_id: agent_id
         });
-      } else {
-        const qrCode = qrCodes.get(agent_id);
-        if (qrCode) {
-          res.json({
+      } catch (initError) {
+        console.error(`❌ Error during client initialization for ${agent_id}:`, initError);
+        clients.delete(agent_id);
+        qrCodes.delete(agent_id);
+        throw initError;
+      }
+    } else {
+      console.log(`♻️ Client already exists for ${agent_id}, checking state...`);
+      
+      // Client exists, try to check if it's ready
+      try {
+        const state = await client.getState();
+        
+        if (state === 'CONNECTED') {
+          return res.json({
             success: true,
-            qr_code: qrCode,
+            already_connected: true,
             session_id: agent_id
           });
         } else {
-          throw new Error('Client exists but no QR code available');
+          console.log(`🔄 Client exists but not connected (state: ${state}), checking for QR...`);
+          const qrCode = qrCodes.get(agent_id);
+          if (qrCode) {
+            return res.json({
+              success: true,
+              qr_code: qrCode,
+              session_id: agent_id
+            });
+          } else {
+            // Client exists but no QR and not connected - reinitialize
+            console.log(`🔄 Reinitializing client for ${agent_id}`);
+            clients.delete(agent_id);
+            qrCodes.delete(agent_id);
+            
+            client = await initializeClient(agent_id);
+            clients.set(agent_id, client);
+            
+            const newQrCode = qrCodes.get(agent_id);
+            if (!newQrCode) {
+              throw new Error('Failed to generate QR code after reinitialization');
+            }
+            
+            return res.json({
+              success: true,
+              qr_code: newQrCode,
+              session_id: agent_id
+            });
+          }
         }
+      } catch (stateError) {
+        console.error(`⚠️ Error checking client state for ${agent_id}:`, stateError);
+        // If we can't get state, assume client is broken and reinitialize
+        console.log(`🔄 Reinitializing client after state error for ${agent_id}`);
+        clients.delete(agent_id);
+        qrCodes.delete(agent_id);
+        
+        client = await initializeClient(agent_id);
+        clients.set(agent_id, client);
+        
+        const newQrCode = qrCodes.get(agent_id);
+        if (!newQrCode) {
+          throw new Error('Failed to generate QR code after error recovery');
+        }
+        
+        return res.json({
+          success: true,
+          qr_code: newQrCode,
+          session_id: agent_id
+        });
       }
     }
   } catch (error) {
-    console.error('Error initializing:', error);
+    console.error('❌ Error in /init endpoint:', error);
     res.status(500).json({ error: error.message });
   }
 });
