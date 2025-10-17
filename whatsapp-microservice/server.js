@@ -177,18 +177,29 @@ async function initializeClient(agentId) {
             const chat = await msg.getChat();
             contactName = chat.name || contactName;
             
-            // Obtener el nombre del participante que envió el mensaje
+            // En mensajes de grupo, obtener el contacto del autor directamente
             if (participant) {
               try {
-                const participantContact = await msg.getClient().getContactById(participant);
-                senderName = participantContact.pushname || participantContact.name || null;
-                console.log(`📍 Group: ${contactName}, Participant: ${participant}, Name: ${senderName}`);
+                // msg.getContact() en grupos retorna el contacto del autor del mensaje
+                const authorContact = await msg.getContact();
+                senderName = authorContact.pushname 
+                          || authorContact.name 
+                          || authorContact.verifiedName
+                          || null;
+                
+                console.log(`📍 Group: ${contactName}, Author: ${participant}`);
+                console.log(`📍 Sender Name: ${senderName}`);
+                console.log(`📍 Contact data:`, {
+                  pushname: authorContact.pushname,
+                  name: authorContact.name,
+                  verifiedName: authorContact.verifiedName
+                });
               } catch (error) {
-                console.error('Error getting participant contact:', error);
+                console.error('Error getting author contact:', error.message);
               }
             }
           } catch (error) {
-            console.error('Error getting chat info:', error);
+            console.error('Error getting chat info:', error.message);
           }
         } else {
           console.log(`📍 Individual message from: ${contactName}`);
