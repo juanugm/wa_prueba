@@ -37,19 +37,40 @@ async function initializeClient(agentId) {
     const client = new Client({
       authStrategy: new LocalAuth({ clientId: agentId }),
       puppeteer: {
-        headless: true,
-        executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || '/usr/bin/chromium',
-        args: [
-          '--no-sandbox',
-          '--disable-setuid-sandbox',
-          '--disable-dev-shm-usage',
-          '--disable-accelerated-2d-canvas',
-          '--no-first-run',
-          '--no-zygote',
-          '--single-process',
-          '--disable-gpu'
-        ]
-      }
+  headless: true,
+  executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || '/usr/bin/google-chrome-stable',
+  args: [
+    '--no-sandbox',
+    '--disable-setuid-sandbox',
+    '--disable-dev-shm-usage',
+    '--disable-accelerated-2d-canvas',
+    '--no-first-run',
+    '--no-zygote',
+    '--disable-gpu',
+    '--disable-software-rasterizer',
+    '--disable-extensions',
+    '--disable-background-networking',
+    '--disable-default-apps',
+    '--disable-sync',
+    '--metrics-recording-only',
+    '--mute-audio',
+    '--no-default-browser-check',
+    '--disable-crash-reporter',
+    '--disable-in-process-stack-traces',
+    '--disable-logging',
+    '--disable-permissions-api',
+    '--disable-speech-api',
+    '--disable-web-security',
+    '--hide-scrollbars',
+    '--ignore-certificate-errors',
+    '--ignore-ssl-errors',
+    '--enable-features=NetworkService',
+    '--force-color-profile=srgb',
+    '--disable-blink-features=AutomationControlled',
+    '--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+  ]
+}
+
     });
 
     // QR Code generation
