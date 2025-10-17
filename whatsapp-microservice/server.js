@@ -76,6 +76,10 @@ async function initializeClient(agentId) {
         headless: true,
         executablePath: execPath,
         timeout: 60000,
+        protocolTimeout: 120000,
+        handleSIGINT: false,
+        handleSIGTERM: false,
+        handleSIGHUP: false,
         args: [
           '--no-sandbox',
           '--disable-setuid-sandbox',
@@ -83,7 +87,6 @@ async function initializeClient(agentId) {
           '--disable-accelerated-2d-canvas',
           '--no-first-run',
           '--no-zygote',
-          '--single-process',
           '--disable-gpu',
           '--disable-software-rasterizer',
           '--disable-extensions',
@@ -97,7 +100,8 @@ async function initializeClient(agentId) {
           '--hide-scrollbars',
           '--disable-blink-features=AutomationControlled',
           '--user-data-dir=/tmp/chrome-user-data',
-          '--disable-features=TranslateUI,BlinkGenPropertyTrees'
+          '--js-flags=--max-old-space-size=512',
+          '--disable-features=TranslateUI,BlinkGenPropertyTrees,IsolateOrigins,site-per-process'
         ]
       }
     });
