@@ -37,6 +37,7 @@ function initializeClient(agentId) {
     authStrategy: new LocalAuth({ clientId: agentId }),
     puppeteer: {
       headless: true,
+      executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || '/usr/bin/chromium',
       args: [
         '--no-sandbox',
         '--disable-setuid-sandbox',
@@ -44,6 +45,7 @@ function initializeClient(agentId) {
         '--disable-accelerated-2d-canvas',
         '--no-first-run',
         '--no-zygote',
+        '--single-process',
         '--disable-gpu'
       ]
     }
@@ -146,6 +148,15 @@ function initializeClient(agentId) {
 }
 
 // Routes
+
+// Root endpoint for Railway health check
+app.get('/', (req, res) => {
+  res.json({ 
+    status: 'WhatsApp service running', 
+    version: '1.0.0',
+    activeClients: clients.size
+  });
+});
 
 // Health check
 app.get('/health', (req, res) => {
