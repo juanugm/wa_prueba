@@ -166,12 +166,21 @@ async function initializeClient(agentId) {
         
         // Detectar si es un mensaje de grupo
         const isGroup = msg.from.endsWith('@g.us');
-        
-        // En grupos, msg.author contiene el ID del participante individual
-        // En chats 1-1, msg.author es undefined
         const participant = isGroup ? msg.author : null;
         
-        console.log(`📍 Group: ${isGroup}, Participant: ${participant || 'N/A'}`);
+        // Obtener el nombre del grupo si es un grupo
+        let contactName = contact.pushname || contact.name || 'Unknown';
+        if (isGroup) {
+          try {
+            const chat = await msg.getChat();
+            contactName = chat.name || contactName;
+            console.log(`📍 Group: ${isGroup}, Group name: ${contactName}, Participant: ${participant}`);
+          } catch (error) {
+            console.error('Error getting chat info:', error);
+          }
+        } else {
+          console.log(`📍 Individual message from: ${contactName}`);
+        }
         
         // Send webhook to Supabase
         const webhookResponse = await fetch(WEBHOOK_URL, {
@@ -187,7 +196,8 @@ async function initializeClient(agentId) {
             body: msg.body,
             timestamp: msg.timestamp,
             has_media: msg.hasMedia,
-            contact_name: contact.pushname || contact.name
+            contact_name: contactName,
+            is_group: isGroup
           })
         });
 
