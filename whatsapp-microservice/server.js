@@ -2,6 +2,8 @@ const express = require('express');
 const { Client, LocalAuth } = require('whatsapp-web.js');
 const QRCode = require('qrcode');
 const cors = require('cors');
+const fs = require('fs').promises;
+const path = require('path');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -28,17 +30,28 @@ async function destroyClient(agentId) {
   if (client) {
     try {
       await client.destroy();
-      // Wait 2 seconds for Puppeteer to fully cleanup
-      await new Promise(resolve => setTimeout(resolve, 2000));
-      console.log(`⏱️ Waited for Puppeteer cleanup`);
+      console.log(`✅ Client destroyed in memory`);
     } catch (error) {
       console.error(`⚠️ Error destroying client for ${agentId}:`, error.message);
     }
   }
   
+  // Delete LocalAuth data from disk
+  try {
+    const authPath = path.join(__dirname, '.wwebjs_auth', agentId);
+    console.log(`🗑️ Deleting LocalAuth data at: ${authPath}`);
+    await fs.rm(authPath, { recursive: true, force: true });
+    console.log(`✅ LocalAuth data deleted`);
+  } catch (error) {
+    console.error(`⚠️ Error deleting LocalAuth data:`, error.message);
+  }
+  
   clients.delete(agentId);
   qrCodes.delete(agentId);
-  console.log(`✅ Client destroyed for ${agentId}`);
+  
+  // Wait for full cleanup
+  await new Promise(resolve => setTimeout(resolve, 2000));
+  console.log(`⏱️ Waited for full cleanup`);
 }
 
 // Auth middleware
