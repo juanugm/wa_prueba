@@ -170,11 +170,23 @@ async function initializeClient(agentId) {
         
         // Obtener el nombre del grupo si es un grupo
         let contactName = contact.pushname || contact.name || 'Unknown';
+        let senderName = null;
+        
         if (isGroup) {
           try {
             const chat = await msg.getChat();
             contactName = chat.name || contactName;
-            console.log(`📍 Group: ${isGroup}, Group name: ${contactName}, Participant: ${participant}`);
+            
+            // Obtener el nombre del participante que envió el mensaje
+            if (participant) {
+              try {
+                const participantContact = await msg.getClient().getContactById(participant);
+                senderName = participantContact.pushname || participantContact.name || null;
+                console.log(`📍 Group: ${contactName}, Participant: ${participant}, Name: ${senderName}`);
+              } catch (error) {
+                console.error('Error getting participant contact:', error);
+              }
+            }
           } catch (error) {
             console.error('Error getting chat info:', error);
           }
@@ -197,7 +209,8 @@ async function initializeClient(agentId) {
             timestamp: msg.timestamp,
             has_media: msg.hasMedia,
             contact_name: contactName,
-            is_group: isGroup
+            is_group: isGroup,
+            sender_name: senderName
           })
         });
 
