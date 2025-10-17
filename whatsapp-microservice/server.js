@@ -164,6 +164,15 @@ async function initializeClient(agentId) {
       try {
         const contact = await msg.getContact();
         
+        // Detectar si es un mensaje de grupo
+        const isGroup = msg.from.endsWith('@g.us');
+        
+        // En grupos, msg.author contiene el ID del participante individual
+        // En chats 1-1, msg.author es undefined
+        const participant = isGroup ? msg.author : null;
+        
+        console.log(`📍 Group: ${isGroup}, Participant: ${participant || 'N/A'}`);
+        
         // Send webhook to Supabase
         const webhookResponse = await fetch(WEBHOOK_URL, {
           method: 'POST',
@@ -174,6 +183,7 @@ async function initializeClient(agentId) {
           body: JSON.stringify({
             agent_id: agentId,
             from: msg.from,
+            participant: participant,
             body: msg.body,
             timestamp: msg.timestamp,
             has_media: msg.hasMedia,
@@ -346,7 +356,9 @@ app.post('/send', authMiddleware, async (req, res) => {
     
     // Format phone number (ensure it has country code)
     let formattedNumber = to;
-    if (!to.includes('@c.us')) {
+    
+    // Solo formatear si NO es un grupo (los grupos ya vienen con @g.us)
+    if (!to.includes('@g.us') && !to.includes('@c.us')) {
       // Remove any non-numeric characters
       formattedNumber = to.replace(/\D/g, '');
       formattedNumber = `${formattedNumber}@c.us`;
