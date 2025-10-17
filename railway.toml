@@ -1,0 +1,6 @@
+[build]
+builder = "DOCKERFILE"
+dockerfilePath = "whatsapp-microservice/Dockerfile"
+
+[deploy]
+startCommand = "node server.js"
