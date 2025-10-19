@@ -222,43 +222,43 @@ async function initializeClient(agentId) {
         const isGroup = conversationTarget.endsWith('@g.us');
         const participant = isGroup ? msg.author : null;
         
-        // ✅ OBTENER EL NOMBRE CORRECTO DEL DESTINATARIO/REMITENTE
+        // ✅ OBTENER EL NOMBRE CORRECTO SIEMPRE DESDE getChatById
         let contactName = 'Unknown';
         let senderName = null;
         
-        if (isGroup) {
-          try {
-            const chat = await msg.getChat();
-            contactName = chat.name || 'Unknown Group';
+        try {
+          const targetChat = await client.getChatById(conversationTarget);
+          
+          if (isGroup) {
+            contactName = targetChat.name || 'Unknown Group';
+            console.log(`📍 Group message: ${contactName}`);
             
-            // En grupos, obtener nombre del autor del mensaje
-            if (participant) {
+            // Para grupos, obtener nombre del autor del mensaje (solo si NO es from_me)
+            if (participant && !msg.fromMe) {
               try {
-                const authorContact = await msg.getContact();
-                senderName = authorContact.pushname 
-                          || authorContact.name 
-                          || authorContact.verifiedName
-                          || null;
-                
-                console.log(`📍 Group: ${contactName}, Author: ${participant}, Sender: ${senderName}`);
-              } catch (error) {
-                console.error('Error getting author contact:', error.message);
+                const participantContact = await client.getContactById(participant);
+                senderName = participantContact.pushname 
+                          || participantContact.name 
+                          || participantContact.verifiedName 
+                          || participant.split('@')[0];
+              } catch (err) {
+                console.error('Error getting participant name:', err.message);
+                senderName = participant.split('@')[0];
               }
             }
-          } catch (error) {
-            console.error('Error getting chat info:', error.message);
+          } else {
+            // Para contactos individuales - SIEMPRE usar el nombre del chat
+            contactName = targetChat.name 
+                       || targetChat.pushname 
+                       || targetChat.verifiedName
+                       || conversationTarget.split('@')[0];
+            
+            console.log(`📍 ${msg.fromMe ? '➡️ Sent to' : '⬅️ Received from'}: ${contactName} (${conversationTarget})`);
           }
-        } else {
-          // ✅ Para mensajes individuales, obtener el chat del destinatario/remitente correcto
-          try {
-            const chat = await client.getChatById(conversationTarget);
-            contactName = chat.name || chat.pushname || 'Unknown';
-            console.log(`📍 ${msg.fromMe ? 'Sent to' : 'Message from'}: ${contactName} (${conversationTarget})`);
-          } catch (error) {
-            console.error('Error getting chat name:', error.message);
-            // Fallback: usar el número como nombre
-            contactName = conversationTarget.replace('@c.us', '').replace('@g.us', '');
-          }
+        } catch (error) {
+          console.error(`❌ Error getting chat name for ${conversationTarget}:`, error.message);
+          // Fallback: usar el número/ID como nombre
+          contactName = conversationTarget.split('@')[0];
         }
         
         // ✅ DETECTAR TIPO DE MENSAJE Y METADATA
@@ -272,10 +272,55 @@ async function initializeClient(agentId) {
           ...(senderName && { sender_name: senderName })
         };
         
+        // ✅ DESCARGA DE MULTIMEDIA (solo para mensajes recibidos)
+        let mediaUrl = null;
+        let mediaFileName = null;
+        
+        if (msg.hasMedia && !msg.fromMe) {
+          try {
+            console.log(`📥 Downloading media (type: ${msg.type})...`);
+            const media = await msg.downloadMedia();
+            
+            if (media) {
+              // Generar nombre de archivo único
+              const timestamp = Date.now();
+              const extension = media.mimetype.split('/')[1] || 'bin';
+              mediaFileName = `whatsapp-${msg.id._serialized.replace(/[^a-zA-Z0-9]/g, '_')}-${timestamp}.${extension}`;
+              
+              // Subir a Supabase Storage
+              const supabaseUrl = WEBHOOK_URL.replace('/functions/v1/webhook-whatsapp-personal', '');
+              const storageUrl = `${supabaseUrl}/storage/v1/object/whatsapp-media/${mediaFileName}`;
+              
+              const storageResponse = await fetch(storageUrl, {
+                method: 'POST',
+                headers: {
+                  'Authorization': `Bearer ${WEBHOOK_SECRET}`,
+                  'Content-Type': media.mimetype,
+                },
+                body: Buffer.from(media.data, 'base64')
+              });
+              
+              if (storageResponse.ok) {
+                mediaUrl = `${supabaseUrl}/storage/v1/object/public/whatsapp-media/${mediaFileName}`;
+                console.log(`✅ Media uploaded: ${mediaUrl}`);
+              } else {
+                const errorText = await storageResponse.text();
+                console.error('❌ Failed to upload media:', errorText);
+              }
+            }
+          } catch (error) {
+            console.error('❌ Error downloading/uploading media:', error.message);
+          }
+        }
+        
         // Detectar tipos especiales de mensaje
         if (msg.hasMedia) {
           messageType = 'media';
           messageMetadata.media_type = msg.type; // image, video, audio, document, sticker
+          if (mediaUrl) {
+            messageMetadata.media_url = mediaUrl;
+            messageMetadata.media_filename = mediaFileName;
+          }
         } else if (msg.type === 'ptt') {
           messageType = 'voice';
           messageMetadata.voice_duration = msg._data?.duration || null;
