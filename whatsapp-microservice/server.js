@@ -215,30 +215,25 @@ async function initializeClient(agentId) {
       console.log(`📨 Message ${msg.fromMe ? 'SENT' : 'RECEIVED'} ${msg.fromMe ? 'to' : 'from'} ${msg.from}:`, msg.body?.substring(0, 50));
       
       try {
-        const contact = await msg.getContact();
-        
         // ✅ IMPORTANTE: Obtener el número correcto según la dirección del mensaje
-        // Si es un mensaje que TÚ enviaste (from_me), el destinatario está en 'to'
-        // Si es un mensaje recibido, el remitente está en 'from'
         const conversationTarget = msg.fromMe ? msg.to : msg.from;
         
         // Detectar si es un mensaje de grupo
         const isGroup = conversationTarget.endsWith('@g.us');
         const participant = isGroup ? msg.author : null;
         
-        // Obtener el nombre del grupo si es un grupo
-        let contactName = contact.pushname || contact.name || 'Unknown';
+        // ✅ OBTENER EL NOMBRE CORRECTO DEL DESTINATARIO/REMITENTE
+        let contactName = 'Unknown';
         let senderName = null;
         
         if (isGroup) {
           try {
             const chat = await msg.getChat();
-            contactName = chat.name || contactName;
+            contactName = chat.name || 'Unknown Group';
             
-            // En mensajes de grupo, obtener el contacto del autor directamente
+            // En grupos, obtener nombre del autor del mensaje
             if (participant) {
               try {
-                // msg.getContact() en grupos retorna el contacto del autor del mensaje
                 const authorContact = await msg.getContact();
                 senderName = authorContact.pushname 
                           || authorContact.name 
@@ -254,7 +249,67 @@ async function initializeClient(agentId) {
             console.error('Error getting chat info:', error.message);
           }
         } else {
-          console.log(`📍 ${msg.fromMe ? 'Sent to' : 'Message from'}: ${contactName}`);
+          // ✅ Para mensajes individuales, obtener el chat del destinatario/remitente correcto
+          try {
+            const chat = await client.getChatById(conversationTarget);
+            contactName = chat.name || chat.pushname || 'Unknown';
+            console.log(`📍 ${msg.fromMe ? 'Sent to' : 'Message from'}: ${contactName} (${conversationTarget})`);
+          } catch (error) {
+            console.error('Error getting chat name:', error.message);
+            // Fallback: usar el número como nombre
+            contactName = conversationTarget.replace('@c.us', '').replace('@g.us', '');
+          }
+        }
+        
+        // ✅ DETECTAR TIPO DE MENSAJE Y METADATA
+        let messageType = 'text';
+        let messageMetadata = {
+          timestamp: msg.timestamp,
+          from: conversationTarget,
+          participant: participant,
+          source: 'whatsapp_personal',
+          from_me: msg.fromMe,
+          ...(senderName && { sender_name: senderName })
+        };
+        
+        // Detectar tipos especiales de mensaje
+        if (msg.hasMedia) {
+          messageType = 'media';
+          messageMetadata.media_type = msg.type; // image, video, audio, document, sticker
+        } else if (msg.type === 'ptt') {
+          messageType = 'voice';
+          messageMetadata.voice_duration = msg._data?.duration || null;
+        } else if (msg.type === 'sticker') {
+          messageType = 'sticker';
+        } else if (msg.hasQuotedMsg) {
+          messageType = 'reply';
+          try {
+            const quotedMsg = await msg.getQuotedMessage();
+            messageMetadata.quoted_message = {
+              id: quotedMsg.id._serialized,
+              body: quotedMsg.body?.substring(0, 100),
+              from: quotedMsg.from
+            };
+          } catch (error) {
+            console.error('Error getting quoted message:', error);
+          }
+        }
+        
+        // Preparar el body del mensaje
+        let messageBody = msg.body || '';
+        if (messageType === 'voice') {
+          messageBody = '🎤 Nota de voz';
+        } else if (messageType === 'sticker') {
+          messageBody = '🎨 Sticker';
+        } else if (messageType === 'media') {
+          const mediaTypeLabel = {
+            'image': '📷 Imagen',
+            'video': '🎥 Video',
+            'audio': '🎵 Audio',
+            'document': '📄 Documento'
+          };
+          messageBody = mediaTypeLabel[msg.type] || '📎 Archivo multimedia';
+          if (msg.body) messageBody += `: ${msg.body}`;
         }
         
         // Send webhook to Supabase
@@ -266,23 +321,25 @@ async function initializeClient(agentId) {
           },
           body: JSON.stringify({
             agent_id: agentId,
-            from: conversationTarget, // ✅ Usar el número correcto según dirección
-            to: msg.to, // ✅ Agregar campo 'to' original
+            from: conversationTarget,
+            to: msg.to,
             participant: participant,
-            body: msg.body,
+            body: messageBody,
             timestamp: msg.timestamp,
             has_media: msg.hasMedia,
             contact_name: contactName,
             is_group: isGroup,
             sender_name: senderName,
-            from_me: msg.fromMe
+            from_me: msg.fromMe,
+            message_type: messageType,
+            message_metadata: messageMetadata
           })
         });
 
         if (!webhookResponse.ok) {
           console.error('Webhook error:', await webhookResponse.text());
         } else {
-          console.log(`✅ Webhook sent successfully (${msg.fromMe ? 'outgoing' : 'incoming'})`);
+          console.log(`✅ Webhook sent (${msg.fromMe ? 'outgoing' : 'incoming'}, type: ${messageType})`);
         }
       } catch (error) {
         console.error('Error processing message:', error);
