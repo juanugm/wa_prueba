@@ -217,8 +217,13 @@ async function initializeClient(agentId) {
       try {
         const contact = await msg.getContact();
         
+        // ✅ IMPORTANTE: Obtener el número correcto según la dirección del mensaje
+        // Si es un mensaje que TÚ enviaste (from_me), el destinatario está en 'to'
+        // Si es un mensaje recibido, el remitente está en 'from'
+        const conversationTarget = msg.fromMe ? msg.to : msg.from;
+        
         // Detectar si es un mensaje de grupo
-        const isGroup = msg.from.endsWith('@g.us');
+        const isGroup = conversationTarget.endsWith('@g.us');
         const participant = isGroup ? msg.author : null;
         
         // Obtener el nombre del grupo si es un grupo
@@ -240,13 +245,7 @@ async function initializeClient(agentId) {
                           || authorContact.verifiedName
                           || null;
                 
-                console.log(`📍 Group: ${contactName}, Author: ${participant}`);
-                console.log(`📍 Sender Name: ${senderName}`);
-                console.log(`📍 Contact data:`, {
-                  pushname: authorContact.pushname,
-                  name: authorContact.name,
-                  verifiedName: authorContact.verifiedName
-                });
+                console.log(`📍 Group: ${contactName}, Author: ${participant}, Sender: ${senderName}`);
               } catch (error) {
                 console.error('Error getting author contact:', error.message);
               }
@@ -267,7 +266,8 @@ async function initializeClient(agentId) {
           },
           body: JSON.stringify({
             agent_id: agentId,
-            from: msg.from,
+            from: conversationTarget, // ✅ Usar el número correcto según dirección
+            to: msg.to, // ✅ Agregar campo 'to' original
             participant: participant,
             body: msg.body,
             timestamp: msg.timestamp,
