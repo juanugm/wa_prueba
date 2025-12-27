@@ -15,13 +15,19 @@ const WEBHOOK_SECRET = process.env.WEBHOOK_SECRET || 'your-secret-key-here';
 const MICROSERVICE_SECRET = process.env.MICROSERVICE_SECRET || 'your-secret-key-here';
 const ALLOWED_ORIGINS = process.env.ALLOWED_ORIGINS || '*';
 
+// ⚙️ OPTIMIZATION SETTINGS
+const MAX_CONCURRENT_SESSIONS = 5; // Límite de sesiones simultáneas
+const QR_TIMEOUT_MS = 3 * 60 * 1000; // 3 minutos para escanear QR
+const CLEANUP_INTERVAL_MS = 5 * 60 * 1000; // Limpieza cada 5 minutos
+
 // Middleware
 app.use(cors({ origin: ALLOWED_ORIGINS }));
 app.use(express.json());
 
-// Storage for clients and QR codes
+// Storage for clients, QR codes, and timeouts
 const clients = new Map();
 const qrCodes = new Map();
+const qrTimeouts = new Map(); // 🆕 Track QR timeouts per agent
 
 // Cleanup all Chrome temp directories on startup
 const cleanupAllTempDirs = () => {
@@ -62,9 +68,23 @@ const cleanupTempDirs = async (agentId) => {
   }
 };
 
+// 🆕 Clear QR timeout for an agent
+function clearQrTimeout(agentId) {
+  const timeout = qrTimeouts.get(agentId);
+  if (timeout) {
+    clearTimeout(timeout);
+    qrTimeouts.delete(agentId);
+    console.log(`⏰ QR timeout cleared for ${agentId}`);
+  }
+}
+
 // Helper function to destroy a client completely
 async function destroyClient(agentId) {
   console.log(`🗑️ Destroying client for ${agentId}`);
+  
+  // 🆕 Clear any pending QR timeout
+  clearQrTimeout(agentId);
+  
   const client = clients.get(agentId);
   
   if (client) {
@@ -165,6 +185,16 @@ async function initializeClient(agentId) {
       try {
         const qrImage = await QRCode.toDataURL(qr);
         qrCodes.set(agentId, qrImage);
+        
+        // 🆕 Clear previous timeout and set new one
+        clearQrTimeout(agentId);
+        const timeout = setTimeout(async () => {
+          console.log(`⏰ QR timeout expired for ${agentId} - destroying client to save resources`);
+          await destroyClient(agentId);
+        }, QR_TIMEOUT_MS);
+        qrTimeouts.set(agentId, timeout);
+        console.log(`⏰ QR timeout set for ${agentId} (${QR_TIMEOUT_MS / 1000}s)`);
+        
         // Resolve the promise when QR is ready
         resolve(client);
       } catch (error) {
@@ -176,6 +206,9 @@ async function initializeClient(agentId) {
     // Ready event
     client.on('ready', async () => {
       console.log(`✅ WhatsApp client ready for ${agentId}`);
+      
+      // 🆕 Clear QR timeout - client connected successfully
+      clearQrTimeout(agentId);
       
       const info = client.info;
       const phoneNumber = info.wid.user;
@@ -394,6 +427,7 @@ async function initializeClient(agentId) {
     // Error handling
     client.on('auth_failure', (msg) => {
       console.error(`❌ Auth failure for ${agentId}:`, msg);
+      clearQrTimeout(agentId);
       clients.delete(agentId);
       qrCodes.delete(agentId);
       reject(new Error(`Authentication failed: ${msg}`));
@@ -401,6 +435,7 @@ async function initializeClient(agentId) {
 
     client.on('disconnected', (reason) => {
       console.log(`🔌 Client disconnected for ${agentId}:`, reason);
+      clearQrTimeout(agentId);
       clients.delete(agentId);
       qrCodes.delete(agentId);
     });
@@ -408,6 +443,7 @@ async function initializeClient(agentId) {
     // Initialize the client
     client.initialize().catch((error) => {
       console.error(`❌ Failed to initialize client for ${agentId}:`, error);
+      clearQrTimeout(agentId);
       clients.delete(agentId);
       qrCodes.delete(agentId);
       reject(error);
@@ -421,8 +457,10 @@ async function initializeClient(agentId) {
 app.get('/', (req, res) => {
   res.json({ 
     status: 'WhatsApp service running', 
-    version: '1.0.0',
-    activeClients: clients.size
+    version: '1.1.0', // 🆕 Updated version
+    activeClients: clients.size,
+    maxClients: MAX_CONCURRENT_SESSIONS,
+    qrTimeoutSeconds: QR_TIMEOUT_MS / 1000
   });
 });
 
@@ -431,6 +469,8 @@ app.get('/health', (req, res) => {
   res.json({ 
     status: 'ok', 
     activeClients: clients.size,
+    maxClients: MAX_CONCURRENT_SESSIONS,
+    pendingQRs: qrCodes.size,
     timestamp: new Date().toISOString()
   });
 });
@@ -446,18 +486,48 @@ app.post('/init', authMiddleware, async (req, res) => {
 
     console.log(`🔄 Init request for agent: ${agent_id}`);
 
-    // If client already exists, destroy it first to ensure clean state
-    let client = clients.get(agent_id);
-    if (client) {
-      console.log(`🔄 Destroying existing client for ${agent_id} before creating new one`);
+    // 🆕 Check if already connected - return early without regenerating QR
+    let existingClient = clients.get(agent_id);
+    if (existingClient) {
+      try {
+        const state = await existingClient.getState();
+        if (state === 'CONNECTED') {
+          console.log(`✅ Agent ${agent_id} already connected, returning existing info`);
+          return res.json({
+            success: true,
+            already_connected: true,
+            phone_number: existingClient.info?.wid?.user,
+            state: 'CONNECTED'
+          });
+        }
+      } catch (e) {
+        console.log(`⚠️ Existing client for ${agent_id} in bad state, will recreate`);
+      }
+    }
+
+    // 🆕 Check session limit BEFORE destroying existing client
+    const activeConnectedClients = await countConnectedClients();
+    if (activeConnectedClients >= MAX_CONCURRENT_SESSIONS && !existingClient) {
+      console.log(`🚫 Session limit reached (${activeConnectedClients}/${MAX_CONCURRENT_SESSIONS})`);
+      return res.status(503).json({ 
+        error: 'Límite de sesiones alcanzado',
+        active_clients: activeConnectedClients,
+        max_clients: MAX_CONCURRENT_SESSIONS,
+        hint: 'Desconecta otra cuenta de WhatsApp primero'
+      });
+    }
+
+    // If client exists but not connected, destroy it first to ensure clean state
+    if (existingClient) {
+      console.log(`🔄 Destroying existing non-connected client for ${agent_id}`);
       await destroyClient(agent_id);
     }
     
-    // Always create a fresh client
-    console.log(`📱 Creating fresh client for ${agent_id} (after cleanup delay)`);
+    // Create a fresh client
+    console.log(`📱 Creating fresh client for ${agent_id}`);
     
     try {
-      client = await initializeClient(agent_id);
+      const client = await initializeClient(agent_id);
       clients.set(agent_id, client);
       
       // At this point, QR should be ready
@@ -470,7 +540,8 @@ app.post('/init', authMiddleware, async (req, res) => {
       return res.json({
         success: true,
         qr_code: qrCode,
-        session_id: agent_id
+        session_id: agent_id,
+        timeout_seconds: QR_TIMEOUT_MS / 1000
       });
     } catch (initError) {
       console.error(`❌ Error during client initialization for ${agent_id}:`, initError);
@@ -483,15 +554,21 @@ app.post('/init', authMiddleware, async (req, res) => {
   }
 });
 
-// Legacy code path - now simplified since we always reinitialize
-/* Old logic removed - we now always destroy and recreate
-    } else {
-      console.log(`♻️ Client already exists for ${agent_id}, checking state...`);
-      
-      // Client exists, try to check if it's ready
-      try {
-        const state = await client.getState();
-*/
+// 🆕 Helper to count actually connected clients
+async function countConnectedClients() {
+  let count = 0;
+  for (const [agentId, client] of clients) {
+    try {
+      const state = await client.getState();
+      if (state === 'CONNECTED') {
+        count++;
+      }
+    } catch (e) {
+      // Client in bad state, don't count
+    }
+  }
+  return count;
+}
 
 // Check status
 app.get('/status/:agent_id', authMiddleware, async (req, res) => {
@@ -639,6 +716,7 @@ app.post('/disconnect/:agent_id', authMiddleware, async (req, res) => {
     
     if (client) {
       console.log(`🗑️ Destroying client for ${agent_id}`);
+      clearQrTimeout(agent_id);
       await client.destroy();
       clients.delete(agent_id);
       qrCodes.delete(agent_id);
@@ -666,6 +744,35 @@ app.post('/disconnect/:agent_id', authMiddleware, async (req, res) => {
   }
 });
 
+// 🆕 Automatic cleanup of inactive/disconnected clients every 5 minutes
+setInterval(async () => {
+  console.log(`🧹 Running automatic cleanup check... (${clients.size} clients, ${qrCodes.size} pending QRs)`);
+  
+  let cleanedUp = 0;
+  
+  for (const [agentId, client] of clients) {
+    try {
+      const state = await client.getState();
+      
+      if (state !== 'CONNECTED') {
+        console.log(`🗑️ Cleaning up disconnected client: ${agentId} (state: ${state || 'unknown'})`);
+        await destroyClient(agentId);
+        cleanedUp++;
+      }
+    } catch (e) {
+      console.log(`🗑️ Cleaning up errored client: ${agentId} (error: ${e.message})`);
+      await destroyClient(agentId);
+      cleanedUp++;
+    }
+  }
+  
+  if (cleanedUp > 0) {
+    console.log(`✅ Cleaned up ${cleanedUp} inactive clients. Remaining: ${clients.size}`);
+  } else {
+    console.log(`✅ No inactive clients to clean up`);
+  }
+}, CLEANUP_INTERVAL_MS);
+
 // Cleanup on startup
 cleanupAllTempDirs();
 
@@ -674,4 +781,7 @@ app.listen(PORT, () => {
   console.log(`🚀 WhatsApp Microservice running on port ${PORT}`);
   console.log(`📍 Webhook URL: ${WEBHOOK_URL}`);
   console.log(`🔐 Auth configured: ${MICROSERVICE_SECRET !== 'your-secret-key-here'}`);
+  console.log(`⚙️ Max concurrent sessions: ${MAX_CONCURRENT_SESSIONS}`);
+  console.log(`⏰ QR timeout: ${QR_TIMEOUT_MS / 1000} seconds`);
+  console.log(`🧹 Cleanup interval: ${CLEANUP_INTERVAL_MS / 1000} seconds`);
 });
