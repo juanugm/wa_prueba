@@ -16,7 +16,7 @@ const MICROSERVICE_SECRET = process.env.MICROSERVICE_SECRET || 'your-secret-key-
 const ALLOWED_ORIGINS = process.env.ALLOWED_ORIGINS || '*';
 
 // ⚙️ OPTIMIZATION SETTINGS
-const MAX_CONCURRENT_SESSIONS = 100; // Límite de sesiones simultáneas
+const MAX_CONCURRENT_SESSIONS = 5; // Límite de sesiones simultáneas
 const QR_TIMEOUT_MS = 3 * 60 * 1000; // 3 minutos para escanear QR
 const CLEANUP_INTERVAL_MS = 5 * 60 * 1000; // Limpieza cada 5 minutos
 
@@ -159,7 +159,7 @@ async function initializeClient(agentId) {
           '--metrics-recording-only',
           '--mute-audio',
           '--no-crash-upload',
-          '--headless=new',
+          // '--headless=new', // REMOVED: Chrome 132+ fix (Issue #3439)
           '--hide-scrollbars',
           '--disable-blink-features=AutomationControlled',
           `--user-data-dir=/tmp/chrome-user-data-${agentId}`,
