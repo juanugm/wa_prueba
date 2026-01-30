@@ -5,6 +5,7 @@ RUN apt-get update && apt-get install -y \
     wget \
     gnupg \
     ca-certificates \
+    git \
     --no-install-recommends
 
 # Agregar repositorio de Chrome/Chromium
